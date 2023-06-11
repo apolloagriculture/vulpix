@@ -11,7 +11,13 @@ use magick_rust::{magick_wand_genesis, MagickError, MagickWand};
 use md5;
 use s3::{error::SdkError, operation::get_object::GetObjectError, primitives::ByteStreamError};
 use serde::{de, Deserialize, Deserializer};
-use std::{fmt, net::SocketAddr, str::FromStr, sync::Once};
+use std::{
+    fmt,
+    net::SocketAddr,
+    str::FromStr,
+    sync::Once,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Clone)]
 struct ImgState {
@@ -94,6 +100,7 @@ struct ImgParams {
     #[serde(default, deserialize_with = "empty_string_as_true")]
     enhance: Option<bool>,
     s: Option<String>,
+    expires: Option<f32>,
 }
 
 fn empty_string_as_true<'de, D>(de: D) -> Result<Option<bool>, D::Error>
@@ -117,14 +124,22 @@ async fn handle_img(
     Query(params): Query<ImgParams>,
     RawQuery(query): RawQuery,
 ) -> impl IntoResponse {
-    let validation = match &params.s {
-        Some(encrypted_key) => validate_signature(
+    let validation = match (&params.s, params.expires) {
+        (Some(encrypted_key), Some(expires)) => validate_signature(
+            query.unwrap_or("".to_string()),
+            &img_key,
+            &secret_salt,
+            encrypted_key,
+        )
+        .and_then(|_| validate_expiration(expires)),
+        (Some(encrypted_key), None) => validate_signature(
             query.unwrap_or("".to_string()),
             &img_key,
             &secret_salt,
             encrypted_key,
         ),
-        None => Ok(()),
+        (None, Some(expires)) => validate_expiration(expires),
+        (None, None) => Ok(()),
     };
 
     let s3_img = match validation {
@@ -158,6 +173,16 @@ fn validate_signature(
         Err(ImageError::EncryptionInvalid(String::from(
             "encryption key invalid",
         )))
+    }
+}
+
+fn validate_expiration(expiration: f32) -> Result<(), ImageError> {
+    let current_epech_in_seconds = SystemTime::now().duration_since(UNIX_EPOCH);
+    match current_epech_in_seconds {
+        Ok(t) if t.as_secs_f32() < expiration as f32 => Ok(()),
+        _ => Err(ImageError::Expired(String::from(
+            "image is already expired",
+        ))),
     }
 }
 
@@ -222,6 +247,7 @@ enum ImageError {
     StreamError(ByteStreamError),
     MagickWandError(MagickError),
     EncryptionInvalid(String),
+    Expired(String),
 }
 
 impl From<SdkError<GetObjectError>> for ImageError {
@@ -243,6 +269,7 @@ impl ImageError {
             ImageError::StreamError(e) => e.to_string(),
             ImageError::MagickWandError(e) => e.to_string(),
             ImageError::EncryptionInvalid(s) => s.to_string(),
+            ImageError::Expired(s) => s.to_string(),
         }
     }
 }
