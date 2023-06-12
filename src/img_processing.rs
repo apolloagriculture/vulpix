@@ -170,3 +170,44 @@ fn handle_img_err(err: ImageError) -> impl IntoResponse {
         ),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_signature() {
+        let raw_query_param = "foo=1&bar=2".to_string();
+        let img_key = "xyz".to_string();
+        let secret_salt = "abcd".to_string();
+        // md5 of "abcd/xyz?foo=1&bar=2"
+        let correct_encrypted_key: String = "d4459a3f3836da68fdf27d933a7e7f5d".to_string();
+        let wrong_encrypted_key: String = "ijkl".to_string();
+
+        assert!(validate_signature(
+            &raw_query_param,
+            &img_key,
+            &secret_salt,
+            &correct_encrypted_key
+        )
+        .is_ok());
+        assert!(validate_signature(
+            &raw_query_param,
+            &img_key,
+            &secret_salt,
+            &wrong_encrypted_key
+        )
+        .is_err());
+    }
+
+    use std::time::Duration;
+    #[test]
+    fn test_validate_expiration() {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let in_future = (now + Duration::from_secs(1000)).as_secs_f32();
+        let in_past = (now - Duration::from_secs(1000)).as_secs_f32();
+
+        assert!(validate_expiration(in_future).is_ok());
+        assert!(validate_expiration(in_past).is_err());
+    }
+}
