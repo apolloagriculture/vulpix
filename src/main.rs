@@ -1,7 +1,7 @@
 use aws_sdk_s3 as s3;
 use axum::{http::StatusCode, response::IntoResponse, routing::get, Router};
 use magick_rust::magick_wand_genesis;
-use std::{net::SocketAddr, sync::Once};
+use std::net::SocketAddr;
 
 mod img_processing;
 use crate::img_processing::{image_router, state::ImgState};
@@ -10,22 +10,21 @@ use crate::img_processing::{image_router, state::ImgState};
 async fn main() {
     let aws_configuration = aws_config::load_from_env().await;
     let s3_client = s3::Client::new(&aws_configuration);
-    static START: Once = Once::new();
-    START.call_once(|| {
-        magick_wand_genesis();
-    });
+
+
+    magick_wand_genesis();
 
     static BUCKET_NAME: &str = "";
     static SECRET_SALT: &str = "";
-
+    
     let routes: Router = Router::new()
         .route("/", get(index))
         .nest(
             "/img",
             image_router().with_state(ImgState {
                 s3_client,
-                bucket_name: BUCKET_NAME.to_string(),
-                secret_salt: SECRET_SALT.to_string(),
+                bucket_name: BUCKET_NAME,
+                secret_salt: SECRET_SALT,
             }),
         )
         .fallback(handler_404);

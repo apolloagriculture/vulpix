@@ -39,13 +39,13 @@ async fn handle_img(
 ) -> impl IntoResponse {
     let validation = validate_params(
         &params,
-        query.unwrap_or("".to_string()),
+        &query.unwrap_or(String::from("")),
         &img_key,
-        &secret_salt,
+        secret_salt,
     );
 
     let s3_img = match validation {
-        Ok(_) => get_aws_img(s3_client, &bucket_name, &img_key).await,
+        Ok(()) => get_aws_img(s3_client, bucket_name, &img_key).await,
         Err(err) => Err(err),
     };
 
@@ -59,37 +59,28 @@ async fn handle_img(
 
 fn validate_params(
     params: &ImgParams,
-    raw_query_param: String,
-    img_key: &String,
-    secret_salt: &String,
+    raw_query_param: &str,
+    img_key: &str,
+    secret_salt: &str,
 ) -> Result<(), ImageError> {
-    match (&params.s, params.expires) {
-        (Some(encrypted_key), Some(expires)) => {
-            validate_signature(&raw_query_param, &img_key, &secret_salt, encrypted_key)
-                .and_then(|_| validate_expiration(expires))
-        }
-        (Some(encrypted_key), None) => {
-            validate_signature(&raw_query_param, &img_key, &secret_salt, encrypted_key)
-        }
-        (None, Some(expires)) => validate_expiration(expires),
-        (None, None) => Ok(()),
-    }
+    validate_signature(raw_query_param, img_key, secret_salt, &params.s)
+        .and_then(|_| validate_expiration(params.expires))
 }
 
 fn validate_signature(
-    raw_query_param: &String,
-    img_key: &String,
-    secret_salt: &String,
-    encrypted_key: &String,
+    raw_query_param: &str,
+    img_key: &str,
+    secret_salt: &str,
+    encrypted_key: &str,
 ) -> Result<(), ImageError> {
     let raw_query_param_without_encryption = raw_query_param
         .replace(&format!("&s={}", encrypted_key), "")
         .replace(&format!("?s={}", encrypted_key), "");
     let md5_digest = md5::compute(format!(
         "{}/{}?{}",
-        &secret_salt, img_key, raw_query_param_without_encryption
+        secret_salt, img_key, raw_query_param_without_encryption
     ));
-    if &format!("{:x}", md5_digest) == encrypted_key {
+    if format!("{:x}", md5_digest) == encrypted_key {
         Ok(())
     } else {
         Err(ImageError::EncryptionInvalid(String::from(
@@ -116,7 +107,7 @@ async fn get_aws_img(
     let aws_img = s3_client
         .get_object()
         .bucket(bucket_name)
-        .key(&*img_key)
+        .key(img_key)
         .send()
         .await?;
     let img_bytes = aws_img.body.collect().await?.into_bytes();
@@ -147,14 +138,14 @@ fn transform_img(orig_img: Bytes, params: ImgParams) -> Result<ImgResult, ImageE
         let _ = wand.blur_image(20.0, 10.0);
     }
 
-    let format = params.format.unwrap_or(ImgFormat::JPEG);
-    wand.write_image_blob(&format.to_string())
+    let format = params.format.unwrap_or(ImgFormat::Jpeg);
+    wand.write_image_blob(&format!("{}", format))
         .map_err(ImageError::MagickWandError)
         .map(|img_bytes| ImgResult { img_bytes, format })
 }
 
 fn handle_img_response(ImgResult { img_bytes, format }: ImgResult) -> impl IntoResponse {
-    let content_type = format!("image/{}", format.to_string());
+    let content_type = format!("image/{}", format);
     (
         ([(axum::http::header::CONTENT_TYPE, content_type.clone())]),
         axum::response::AppendHeaders([(axum::http::header::CONTENT_TYPE, content_type.clone())]),
@@ -177,27 +168,15 @@ mod tests {
 
     #[test]
     fn test_validate_signature() {
-        let raw_query_param = "foo=1&bar=2".to_string();
-        let img_key = "xyz".to_string();
-        let secret_salt = "abcd".to_string();
+        let raw_query_param = "foo=1&bar=2";
+        let img_key = "xyz";
+        let secret_salt = "abcd";
         // md5 of "abcd/xyz?foo=1&bar=2"
-        let correct_encrypted_key: String = "d4459a3f3836da68fdf27d933a7e7f5d".to_string();
-        let wrong_encrypted_key: String = "ijkl".to_string();
+        let correct_key = "d4459a3f3836da68fdf27d933a7e7f5d";
+        let wrong_key = "ijkl";
 
-        assert!(validate_signature(
-            &raw_query_param,
-            &img_key,
-            &secret_salt,
-            &correct_encrypted_key
-        )
-        .is_ok());
-        assert!(validate_signature(
-            &raw_query_param,
-            &img_key,
-            &secret_salt,
-            &wrong_encrypted_key
-        )
-        .is_err());
+        assert!(validate_signature(raw_query_param, img_key, secret_salt, correct_key).is_ok());
+        assert!(validate_signature(raw_query_param, img_key, secret_salt, wrong_key).is_err());
     }
 
     use std::time::Duration;
