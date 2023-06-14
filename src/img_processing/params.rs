@@ -26,6 +26,8 @@ pub struct ImgParams {
     #[serde(default, deserialize_with = "empty_string_as_true")]
     pub blur: Option<bool>,
     #[serde(default, deserialize_with = "empty_string_as_true")]
+    pub sharpen: Option<bool>,
+    #[serde(default, deserialize_with = "empty_string_as_true")]
     pub enhance: Option<bool>,
     pub s: String,
     pub expires: f32,

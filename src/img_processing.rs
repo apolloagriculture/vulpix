@@ -130,8 +130,13 @@ fn transform_img(orig_img: Bytes, params: ImgParams) -> Result<ImgResult, ImageE
         let _ = wand.auto_level();
         let _ = wand.auto_gamma();
     }
+
     if params.blur.unwrap_or(false) {
         let _ = wand.blur_image(20.0, 10.0);
+    }
+
+    if params.sharpen.unwrap_or(false) {
+        let _ = wand.sharpen_image(0.0, 10.0);
     }
 
     let format = params.format.unwrap_or(ImgFormat::Jpeg);
