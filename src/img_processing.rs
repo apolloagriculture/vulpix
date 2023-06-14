@@ -83,9 +83,7 @@ fn validate_signature(
     if format!("{:x}", md5_digest) == encrypted_key {
         Ok(())
     } else {
-        Err(ImageError::EncryptionInvalid(String::from(
-            "encryption key invalid",
-        )))
+        Err(ImageError::EncryptionInvalid)
     }
 }
 
@@ -93,9 +91,7 @@ fn validate_expiration(expiration: f32) -> Result<(), ImageError> {
     let current_epech_in_seconds = SystemTime::now().duration_since(UNIX_EPOCH);
     match current_epech_in_seconds {
         Ok(t) if t.as_secs_f32() < expiration as f32 => Ok(()),
-        _ => Err(ImageError::Expired(String::from(
-            "image is already expired",
-        ))),
+        _ => Err(ImageError::Expired),
     }
 }
 
@@ -157,7 +153,7 @@ fn handle_img_err(err: ImageError) -> impl IntoResponse {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(
-            serde_json::json!({"err": "an error occured while processing image", "msg": err.get_err_message()}),
+            serde_json::json!({"err": "an error occured while processing image", "msg": format!("{}", err)}),
         ),
     )
 }
