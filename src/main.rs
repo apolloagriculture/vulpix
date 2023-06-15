@@ -29,7 +29,8 @@ async fn main() {
         )
         .fallback(handler_404);
 
-    let addr: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 6060));
+    let port = 6060;
+    let addr: SocketAddr = format!("[::]:{}", port).parse().unwrap();
     println!("Server running on {}\n", addr);
 
     axum::Server::bind(&addr)
