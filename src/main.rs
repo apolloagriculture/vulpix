@@ -23,6 +23,7 @@ async fn main() {
     
     let routes: Router = Router::new()
         .route("/", get(index))
+        .route("/health", get(health))
         .nest(
             "/img",
             image_router().with_state(ImgState {
@@ -50,6 +51,10 @@ async fn main() {
 
 async fn index() -> impl IntoResponse {
     (StatusCode::OK, "welcome to vulpix")
+}
+
+async fn health() -> impl IntoResponse {
+    StatusCode::NO_CONTENT
 }
 
 async fn handler_404() -> impl IntoResponse {
