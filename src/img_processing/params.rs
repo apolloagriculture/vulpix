@@ -1,7 +1,7 @@
 use serde::{de, Deserialize, Deserializer};
 use std::{fmt, str::FromStr};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub enum ImgFormat {
     #[serde(alias = "png")]
     Png,
@@ -15,6 +15,12 @@ impl fmt::Display for ImgFormat {
             ImgFormat::Png => write!(f, "png"),
             ImgFormat::Jpeg => write!(f, "jpeg"),
         }
+    }
+}
+
+impl Default for ImgFormat {
+    fn default() -> Self {
+        ImgFormat::Jpeg
     }
 }
 
@@ -41,5 +47,19 @@ where
     match opt.as_deref() {
         None | Some("") => Ok(Some(true)),
         Some(s) => FromStr::from_str(s).map_err(de::Error::custom).map(Some),
+    }
+}
+
+impl ImgParams {
+    pub fn cacheable_param_key(&self) -> String {
+        format!(
+            "w={:?}&h={:?}&format={:?}&blur={:?}&sharpen={:?}&enhance={:?}",
+            self.w.unwrap_or_default(),
+            self.h.unwrap_or_default(),
+            self.format.clone().unwrap_or_default(),
+            self.blur.unwrap_or_default(),
+            self.sharpen.unwrap_or_default(),
+            self.enhance.unwrap_or_default()
+        )
     }
 }

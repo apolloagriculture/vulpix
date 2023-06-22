@@ -1,36 +1,48 @@
 use aws_sdk_s3 as s3;
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Router};
+use axum::{http::StatusCode, response::IntoResponse, routing::get, Extension, Router};
 use magick_rust::magick_wand_genesis;
 use std::net::SocketAddr;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 
 mod img_processing;
-use crate::img_processing::{image_router, state::ImgState};
+use crate::img_processing::{handle_img, state::ImgState};
+
+const KENYA_BUCKET_NAME: &str = "";
+const KENYA_CACHE_BUCKET_NAME: &str = "";
+
+const ZAMBIA_BUCKET_NAME: &str = "";
+const ZAMBIA_CACHE_BUCKET_NAME: &str = "";
+
+const SECRET_SALT: &str = "";
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt().with_target(false).pretty().init();
-
-    let aws_configuration = aws_config::load_from_env().await;
-    let s3_client = s3::Client::new(&aws_configuration);
-
-
+    tracing_subscriber::fmt().with_target(false).init();
     magick_wand_genesis();
 
-    static BUCKET_NAME: &str = "";
-    static SECRET_SALT: &str = "";
-    
+    let aws_configuration: aws_config::SdkConfig = aws_config::load_from_env().await;
+    let s3_client: aws_sdk_s3::Client = s3::Client::new(&aws_configuration);
+
     let routes: Router = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
         .nest(
-            "/img",
-            image_router().with_state(ImgState {
-                s3_client,
-                bucket_name: BUCKET_NAME,
-                secret_salt: SECRET_SALT,
-            }),
+            "",
+            Router::new()
+                .route("/kenya/*img_key", get(handle_img))
+                .with_state(ImgState {
+                    bucket_name: KENYA_BUCKET_NAME,
+                    cache_bucket_name: KENYA_CACHE_BUCKET_NAME,
+                    secret_salt: SECRET_SALT,
+                })
+                .route("/zambia/*img_key", get(handle_img))
+                .with_state(ImgState {
+                    bucket_name: ZAMBIA_BUCKET_NAME,
+                    cache_bucket_name: ZAMBIA_CACHE_BUCKET_NAME,
+                    secret_salt: SECRET_SALT,
+                })
+                .layer(Extension(s3_client)),
         )
         .fallback(handler_404)
         .layer(

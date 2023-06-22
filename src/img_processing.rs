@@ -4,8 +4,7 @@ use axum::{
     extract::{Path, Query, RawQuery, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
-    Json, Router,
+    Extension, Json,
 };
 use magick_rust::MagickWand;
 use md5;
@@ -16,23 +15,15 @@ mod img_result;
 mod params;
 pub mod state;
 
-use self::{
-    errors::ImageError,
-    img_result::ImgResult,
-    params::{ImgFormat, ImgParams},
-    state::ImgState,
-};
+use self::{errors::ImageError, img_result::ImgResult, params::ImgParams, state::ImgState};
 
-pub fn image_router() -> Router<ImgState> {
-    Router::new().route("/*img_key", get(handle_img))
-}
-
-async fn handle_img(
+pub async fn handle_img(
     State(ImgState {
-        s3_client,
         secret_salt,
         bucket_name,
+        cache_bucket_name,
     }): State<ImgState>,
+    Extension(s3_client): Extension<s3::Client>,
     Path(img_key): Path<String>,
     Query(params): Query<ImgParams>,
     RawQuery(query): RawQuery,
@@ -44,16 +35,84 @@ async fn handle_img(
         secret_salt,
     );
 
-    let s3_img = match validation {
-        Ok(()) => get_aws_img(s3_client, bucket_name, &img_key).await,
+    let img_res = match validation {
+        Ok(()) => {
+            get_or_cache_img(
+                &s3_client,
+                bucket_name,
+                cache_bucket_name,
+                &img_key,
+                &params,
+            )
+            .await
+        }
         Err(err) => Err(err),
     };
 
-    let transformed_img = s3_img.and_then(|img| transform_img(img, params));
-
-    match transformed_img {
+    match img_res {
         Ok(img) => handle_img_response(img).into_response(),
         Err(err) => handle_img_err(err).into_response(),
+    }
+}
+
+async fn get_or_cache_img(
+    s3_client: &s3::Client,
+    bucket_name: &str,
+    cache_bucket_name: &str,
+    img_key: &str,
+    params: &ImgParams,
+) -> Result<ImgResult, ImageError> {
+    let cached_key = format!("{}{}", img_key, params.cacheable_param_key());
+    let cached_img = get_aws_img(s3_client, cache_bucket_name, &cached_key).await;
+
+    match cached_img {
+        Ok(img) => Ok(ImgResult {
+            img_bytes: img.to_vec(),
+            format: params.format.clone().unwrap_or_default(),
+        }),
+        Err(_) => {
+            transform_cache_img(
+                s3_client,
+                bucket_name,
+                cache_bucket_name,
+                img_key,
+                &cached_key,
+                &params,
+            )
+            .await
+        }
+    }
+}
+
+async fn transform_cache_img(
+    s3_client: &s3::Client,
+    bucket_name: &str,
+    cache_bucket_name: &str,
+    img_key: &str,
+    cached_key: &str,
+    params: &ImgParams,
+) -> Result<ImgResult, ImageError> {
+    let s3_img = get_aws_img(&s3_client, bucket_name, &img_key).await;
+
+    match s3_img {
+        Ok(img) => {
+            let cloned_img = img.clone();
+            let cloned_s3_client = s3_client.clone();
+            let cloned_cache_bucket_name = cache_bucket_name.to_owned();
+            let cloned_cached_key = cached_key.to_owned();
+
+            tokio::spawn(async move {
+                save_aws_img(
+                    &cloned_s3_client,
+                    &cloned_cache_bucket_name,
+                    &cloned_cached_key,
+                    img,
+                )
+                .await
+            });
+            transform_img(cloned_img, params)
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -96,10 +155,10 @@ fn validate_expiration(expiration: f32) -> Result<(), ImageError> {
 }
 
 async fn get_aws_img(
-    s3_client: s3::Client,
+    s3_client: &s3::Client,
     bucket_name: &str,
     img_key: &str,
-) -> Result<axum::body::Bytes, ImageError> {
+) -> Result<Bytes, ImageError> {
     let aws_img = s3_client
         .get_object()
         .bucket(bucket_name)
@@ -110,7 +169,24 @@ async fn get_aws_img(
     Ok(img_bytes)
 }
 
-fn transform_img(orig_img: Bytes, params: ImgParams) -> Result<ImgResult, ImageError> {
+async fn save_aws_img(
+    s3_client: &s3::Client,
+    bucket_name: &str,
+    img_key: &str,
+    body: Bytes,
+) -> Result<(), ImageError> {
+    let body_stream = s3::primitives::ByteStream::from(body);
+    let _ = s3_client
+        .put_object()
+        .bucket(bucket_name)
+        .key(img_key)
+        .body(body_stream)
+        .send()
+        .await?;
+    Ok(())
+}
+
+fn transform_img(orig_img: Bytes, params: &ImgParams) -> Result<ImgResult, ImageError> {
     let wand = MagickWand::new();
     let _ = wand.read_image_blob(orig_img);
 
@@ -139,7 +215,7 @@ fn transform_img(orig_img: Bytes, params: ImgParams) -> Result<ImgResult, ImageE
         let _ = wand.sharpen_image(0.0, 10.0);
     }
 
-    let format = params.format.unwrap_or(ImgFormat::Jpeg);
+    let format = params.format.clone().unwrap_or_default();
     wand.write_image_blob(&format!("{}", format))
         .map_err(ImageError::MagickWandError)
         .map(|img_bytes| ImgResult { img_bytes, format })
