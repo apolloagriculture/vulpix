@@ -1,7 +1,7 @@
-use serde::{de, Deserialize, Deserializer};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ImgFormat {
     #[serde(alias = "png")]
     Png,
@@ -24,19 +24,28 @@ impl Default for ImgFormat {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ImgParams {
-    pub w: Option<usize>,
-    pub h: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub w: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<ImgFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default, deserialize_with = "empty_string_as_true")]
     pub blur: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default, deserialize_with = "empty_string_as_true")]
     pub sharpen: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default, deserialize_with = "empty_string_as_true")]
     pub enhance: Option<bool>,
-    pub s: String,
-    pub expires: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "empty_string_as_true")]
+    pub facecrop: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub facepad: Option<f32>
 }
 
 fn empty_string_as_true<'de, D>(de: D) -> Result<Option<bool>, D::Error>
@@ -51,15 +60,7 @@ where
 }
 
 impl ImgParams {
-    pub fn cacheable_param_key(&self) -> String {
-        format!(
-            "w={:?}&h={:?}&format={:?}&blur={:?}&sharpen={:?}&enhance={:?}",
-            self.w.unwrap_or_default(),
-            self.h.unwrap_or_default(),
-            self.format.clone().unwrap_or_default(),
-            self.blur.unwrap_or_default(),
-            self.sharpen.unwrap_or_default(),
-            self.enhance.unwrap_or_default()
-        )
+    pub fn cacheable_param_key(&self) -> md5::Digest {
+        md5::compute(format!("{}", serde_json::to_string(&self).unwrap()))
     }
 }

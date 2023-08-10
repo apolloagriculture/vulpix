@@ -6,7 +6,7 @@ use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 
 mod img_processing;
-use crate::img_processing::{handle_img, state::ImgState};
+use crate::img_processing::{handle_img, state::BucketConfig};
 
 const KENYA_BUCKET_NAME: &str = "";
 const KENYA_CACHE_BUCKET_NAME: &str = "";
@@ -14,15 +14,17 @@ const KENYA_CACHE_BUCKET_NAME: &str = "";
 const ZAMBIA_BUCKET_NAME: &str = "";
 const ZAMBIA_CACHE_BUCKET_NAME: &str = "";
 
-const SECRET_SALT: &str = "";
+const PORT: i32 = 6060;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt().with_target(false).init();
+    tracing_subscriber::fmt().init();
     magick_wand_genesis();
 
     let aws_configuration: aws_config::SdkConfig = aws_config::load_from_env().await;
     let s3_client: aws_sdk_s3::Client = s3::Client::new(&aws_configuration);
+    let rek_client: aws_sdk_rekognition::Client =
+        aws_sdk_rekognition::Client::new(&aws_configuration);
 
     let routes: Router = Router::new()
         .route("/", get(index))
@@ -30,19 +32,18 @@ async fn main() {
         .nest(
             "",
             Router::new()
-                .route("/kenya/*img_key", get(handle_img))
-                .with_state(ImgState {
+                .route("/ke/*img_key", get(handle_img))
+                .with_state(BucketConfig {
                     bucket_name: KENYA_BUCKET_NAME,
                     cache_bucket_name: KENYA_CACHE_BUCKET_NAME,
-                    secret_salt: SECRET_SALT,
                 })
-                .route("/zambia/*img_key", get(handle_img))
-                .with_state(ImgState {
+                .route("/zm/*img_key", get(handle_img))
+                .with_state(BucketConfig {
                     bucket_name: ZAMBIA_BUCKET_NAME,
                     cache_bucket_name: ZAMBIA_CACHE_BUCKET_NAME,
-                    secret_salt: SECRET_SALT,
                 })
-                .layer(Extension(s3_client)),
+                .layer(Extension(s3_client))
+                .layer(Extension(rek_client)),
         )
         .fallback(handler_404)
         .layer(
@@ -51,8 +52,7 @@ async fn main() {
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         );
 
-    let port = 6060;
-    let addr: SocketAddr = format!("[::]:{}", port).parse().unwrap();
+    let addr: SocketAddr = format!("[::]:{}", PORT).parse().unwrap();
     tracing::info!("listening on {}", addr);
 
     axum::Server::bind(&addr)

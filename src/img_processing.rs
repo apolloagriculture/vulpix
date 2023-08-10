@@ -1,53 +1,41 @@
+use aws_sdk_rekognition as rek;
 use aws_sdk_s3 as s3;
 use axum::{
     body::Bytes,
-    extract::{Path, Query, RawQuery, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Extension, Json,
 };
 use magick_rust::MagickWand;
-use md5;
-use std::time::{SystemTime, UNIX_EPOCH};
+use rek::types::BoundingBox;
 
 mod errors;
 mod img_result;
 mod params;
 pub mod state;
 
-use self::{errors::ImageError, img_result::ImgResult, params::ImgParams, state::ImgState};
+use self::{errors::ImageError, img_result::ImgResult, params::ImgParams, state::BucketConfig};
 
 pub async fn handle_img(
-    State(ImgState {
-        secret_salt,
+    State(BucketConfig {
         bucket_name,
         cache_bucket_name,
-    }): State<ImgState>,
+    }): State<BucketConfig>,
     Extension(s3_client): Extension<s3::Client>,
+    Extension(rek_client): Extension<rek::Client>,
     Path(img_key): Path<String>,
     Query(params): Query<ImgParams>,
-    RawQuery(query): RawQuery,
 ) -> impl IntoResponse {
-    let validation = validate_params(
-        &params,
-        &query.unwrap_or(String::from("")),
+    let img_res = get_or_cache_img(
+        &s3_client,
+        rek_client,
+        bucket_name,
+        cache_bucket_name,
         &img_key,
-        secret_salt,
-    );
-
-    let img_res = match validation {
-        Ok(()) => {
-            get_or_cache_img(
-                &s3_client,
-                bucket_name,
-                cache_bucket_name,
-                &img_key,
-                &params,
-            )
-            .await
-        }
-        Err(err) => Err(err),
-    };
+        params,
+    )
+    .await;
 
     match img_res {
         Ok(img) => handle_img_response(img).into_response(),
@@ -57,12 +45,13 @@ pub async fn handle_img(
 
 async fn get_or_cache_img(
     s3_client: &s3::Client,
+    rek_client: rek::Client,
     bucket_name: &str,
     cache_bucket_name: &str,
     img_key: &str,
-    params: &ImgParams,
+    params: ImgParams,
 ) -> Result<ImgResult, ImageError> {
-    let cached_key = format!("{}{}", img_key, params.cacheable_param_key());
+    let cached_key = format!("{:x}/{}", params.cacheable_param_key(), img_key);
     let cached_img = get_aws_img(s3_client, cache_bucket_name, &cached_key).await;
 
     match cached_img {
@@ -73,6 +62,7 @@ async fn get_or_cache_img(
         Err(_) => {
             transform_cache_img(
                 s3_client,
+                rek_client,
                 bucket_name,
                 cache_bucket_name,
                 img_key,
@@ -86,72 +76,38 @@ async fn get_or_cache_img(
 
 async fn transform_cache_img(
     s3_client: &s3::Client,
+    rek_client: rek::Client,
     bucket_name: &str,
     cache_bucket_name: &str,
     img_key: &str,
     cached_key: &str,
     params: &ImgParams,
 ) -> Result<ImgResult, ImageError> {
-    let s3_img = get_aws_img(&s3_client, bucket_name, &img_key).await;
-
-    match s3_img {
-        Ok(img) => {
-            let cloned_img = img.clone();
-            let cloned_s3_client = s3_client.clone();
-            let cloned_cache_bucket_name = cache_bucket_name.to_owned();
-            let cloned_cached_key = cached_key.to_owned();
-
-            tokio::spawn(async move {
-                save_aws_img(
-                    &cloned_s3_client,
-                    &cloned_cache_bucket_name,
-                    &cloned_cached_key,
-                    img,
-                )
-                .await
-            });
-            transform_img(cloned_img, params)
-        }
-        Err(err) => Err(err),
-    }
-}
-
-fn validate_params(
-    params: &ImgParams,
-    raw_query_param: &str,
-    img_key: &str,
-    secret_salt: &str,
-) -> Result<(), ImageError> {
-    validate_signature(raw_query_param, img_key, secret_salt, &params.s)
-        .and_then(|_| validate_expiration(params.expires))
-}
-
-fn validate_signature(
-    raw_query_param: &str,
-    img_key: &str,
-    secret_salt: &str,
-    encrypted_key: &str,
-) -> Result<(), ImageError> {
-    let raw_query_param_without_encryption = raw_query_param
-        .replace(&format!("&s={}", encrypted_key), "")
-        .replace(&format!("?s={}", encrypted_key), "");
-    let md5_digest = md5::compute(format!(
-        "{}/{}?{}",
-        secret_salt, img_key, raw_query_param_without_encryption
-    ));
-    if format!("{:x}", md5_digest) == encrypted_key {
-        Ok(())
+    let s3_img = get_aws_img(&s3_client, bucket_name, &img_key).await?;
+    let face_bounding_box = if params.facecrop.unwrap_or(false) {
+        rek_face(rek_client, bucket_name, &img_key).await
     } else {
-        Err(ImageError::EncryptionInvalid)
-    }
-}
+        None
+    };
 
-fn validate_expiration(expiration: f32) -> Result<(), ImageError> {
-    let current_epech_in_seconds = SystemTime::now().duration_since(UNIX_EPOCH);
-    match current_epech_in_seconds {
-        Ok(t) if t.as_secs_f32() < expiration as f32 => Ok(()),
-        _ => Err(ImageError::Expired),
-    }
+    let img_result = transform_img(s3_img, params, face_bounding_box)?;
+
+    let cloned_img = img_result.clone().img_bytes;
+    let cloned_s3_client = s3_client.clone();
+    let cloned_cache_bucket_name = cache_bucket_name.to_owned();
+    let cloned_cached_key = cached_key.to_owned();
+
+    tokio::spawn(async move {
+        save_aws_img(
+            &cloned_s3_client,
+            &cloned_cache_bucket_name,
+            &cloned_cached_key,
+            cloned_img.into(),
+        )
+        .await
+    });
+
+    Ok(img_result)
 }
 
 async fn get_aws_img(
@@ -186,17 +142,58 @@ async fn save_aws_img(
     Ok(())
 }
 
-fn transform_img(orig_img: Bytes, params: &ImgParams) -> Result<ImgResult, ImageError> {
+fn transform_img(
+    orig_img: Bytes,
+    params: &ImgParams,
+    face_bounding_box: Option<BoundingBox>,
+) -> Result<ImgResult, ImageError> {
     let wand = MagickWand::new();
     let _ = wand.read_image_blob(orig_img);
 
     let orig_width = wand.get_image_width() as f32;
     let orig_height = wand.get_image_height() as f32;
-    let aspect_ratio = orig_width as f32 / orig_height as f32;
+    let orig_aspect_ratio = orig_width as f32 / orig_height as f32;
+
+    if let Some(bounding_box) = face_bounding_box {
+        let box_w: f32 = bounding_box.width().unwrap_or(1.0) * orig_width;
+        let box_h: f32 = bounding_box.height().unwrap_or(1.0) * orig_height;
+
+        let desired_aspect_ratio = params.w.unwrap_or(orig_width) / params.h.unwrap_or(orig_height);
+
+        let (mut adjusted_w, mut adjusted_h) = if box_w > box_h {
+            (box_w, box_w / desired_aspect_ratio)
+        } else {
+            (box_h * desired_aspect_ratio, box_h)
+        };
+        if adjusted_w > orig_width {
+            adjusted_w = orig_width
+        };
+        if adjusted_h > orig_height {
+            adjusted_h = orig_height
+        };
+
+        let padding = params.facepad.unwrap_or(1.0);
+        let padded_w: f32 = adjusted_w * padding;
+        let padded_h: f32 = adjusted_h * padding;
+        let padded_x = (bounding_box.left().unwrap_or(0.0) * orig_width)
+            - ((padding - 1.0) * adjusted_w / 2.0)
+            - (adjusted_w - box_w) / 1.5;
+        let padded_y = (bounding_box.top().unwrap_or(0.0) * orig_height)
+            - ((padding - 1.0) * adjusted_h / 2.0)
+            - (adjusted_h - box_h) / 1.5;
+
+        let _ = wand.crop_image(
+            padded_w as usize,
+            padded_h as usize,
+            padded_x as isize,
+            padded_y as isize,
+        );
+    };
+
     let (new_width, new_height) = match (params.w, params.h) {
-        (Some(w), None) => (w as f32, w as f32 / aspect_ratio),
-        (None, Some(h)) => (h as f32 * aspect_ratio, h as f32),
-        (Some(w), Some(h)) => (w as f32, h as f32),
+        (Some(w), None) => (w, w / orig_aspect_ratio),
+        (None, Some(h)) => (h * orig_aspect_ratio, h),
+        (Some(w), Some(h)) => (w, h),
         (None, None) => (orig_width, orig_height),
     };
 
@@ -221,6 +218,34 @@ fn transform_img(orig_img: Bytes, params: &ImgParams) -> Result<ImgResult, Image
         .map(|img_bytes| ImgResult { img_bytes, format })
 }
 
+async fn rek_face(
+    rek_client: rek::Client,
+    bucket_name: &str,
+    img_key: &str,
+) -> Option<BoundingBox> {
+    let s3_obj = rek::types::S3Object::builder()
+        .bucket(bucket_name)
+        .name(img_key)
+        .build();
+
+    let s3_img = rek::types::Image::builder().s3_object(s3_obj).build();
+
+    let rek_resp = rek_client
+        .detect_faces()
+        .image(s3_img)
+        .attributes(aws_sdk_rekognition::types::Attribute::All)
+        .send()
+        .await;
+
+    rek_resp.ok().and_then(|f| {
+        f.face_details()
+            .unwrap_or_default()
+            .first()
+            .and_then(|f| f.bounding_box())
+            .cloned()
+    })
+}
+
 fn handle_img_response(ImgResult { img_bytes, format }: ImgResult) -> impl IntoResponse {
     let content_type = format!("image/{}", format);
     (
@@ -237,33 +262,4 @@ fn handle_img_err(err: ImageError) -> impl IntoResponse {
             serde_json::json!({"err": "an error occured while processing image", "msg": format!("{}", err)}),
         ),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_signature() {
-        let raw_query_param = "foo=1&bar=2";
-        let img_key = "xyz";
-        let secret_salt = "abcd";
-        // md5 of "abcd/xyz?foo=1&bar=2"
-        let correct_key = "d4459a3f3836da68fdf27d933a7e7f5d";
-        let wrong_key = "ijkl";
-
-        assert!(validate_signature(raw_query_param, img_key, secret_salt, correct_key).is_ok());
-        assert!(validate_signature(raw_query_param, img_key, secret_salt, wrong_key).is_err());
-    }
-
-    use std::time::Duration;
-    #[test]
-    fn test_validate_expiration() {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let in_future = (now + Duration::from_secs(1000)).as_secs_f32();
-        let in_past = (now - Duration::from_secs(1000)).as_secs_f32();
-
-        assert!(validate_expiration(in_future).is_ok());
-        assert!(validate_expiration(in_past).is_err());
-    }
 }
