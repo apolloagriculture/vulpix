@@ -18,7 +18,7 @@ const PORT: i32 = 6060;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt().json().init();
     magick_wand_genesis();
 
     let aws_configuration: aws_config::SdkConfig = aws_config::load_from_env().await;
