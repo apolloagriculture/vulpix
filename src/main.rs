@@ -5,6 +5,8 @@ use std::net::SocketAddr;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 
+mod settings;
+
 mod img_processing;
 use crate::img_processing::{handle_img, state::BucketConfig};
 
@@ -14,11 +16,21 @@ const KENYA_CACHE_BUCKET_NAME: &str = "";
 const ZAMBIA_BUCKET_NAME: &str = "";
 const ZAMBIA_CACHE_BUCKET_NAME: &str = "";
 
-const PORT: i32 = 6060;
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().json().init();
+
+    let config = match settings::Settings::new() {
+        Ok(settings) => {
+            tracing::log::info!("starting with config | {:?}", settings);
+            settings
+        }
+        Err(err) => {
+            tracing::log::error!("couldn't load config: {:?}", err);
+            panic!("couldn't load config: {:?}", err)
+        }
+    };
+
     magick_wand_genesis();
 
     let aws_configuration: aws_config::SdkConfig = aws_config::load_from_env().await;
@@ -52,7 +64,7 @@ async fn main() {
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         );
 
-    let addr: SocketAddr = format!("[::]:{}", PORT).parse().unwrap();
+    let addr: SocketAddr = format!("[::]:{}", config.server.port).parse().unwrap();
     tracing::info!("listening on {}", addr);
 
     axum::Server::bind(&addr)

@@ -13,6 +13,7 @@ RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
 
 RUN rm src/*.rs
 COPY ./src ./src
+COPY ./config ./config
 
 RUN rm ./target/release/deps/vulpix*
 RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
@@ -20,9 +21,11 @@ RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
 
 FROM alpine
 COPY --from=build /vulpix/target/release/vulpix .
+COPY ./config ./config
 
 RUN apk --update add imagemagick
 
+ENV VULPIX_APP_ENVIRONMENT Production
 CMD ["./vulpix"]
 
 EXPOSE 6060
