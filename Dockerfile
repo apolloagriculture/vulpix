@@ -24,7 +24,7 @@ FROM alpine
 COPY --from=build /vulpix/target/release/vulpix .
 COPY ./config ./config
 
-RUN apk --update add imagemagick
+RUN apk --update add curl imagemagick
 
 ENV VULPIX_APP_ENVIRONMENT Production
 CMD ["./vulpix"]
