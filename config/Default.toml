@@ -1,2 +1,7 @@
 [server]
 port = 6060
+
+[[img_sources]]
+  path = ""
+  bucket = ""
+  cache_bucket = ""

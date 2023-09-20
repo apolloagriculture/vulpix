@@ -5,7 +5,8 @@ RUN apk add libc-dev clang-dev
 RUN USER=root cargo new --bin vulpix
 WORKDIR /vulpix
 
-RUN apk --update add imagemagick-dev
+RUN apk --update add imagemagick-dev openssl-dev
+
 
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml

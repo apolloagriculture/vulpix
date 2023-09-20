@@ -1,6 +1,7 @@
 use aws_sdk_s3 as s3;
 use axum::{http::StatusCode, response::IntoResponse, routing::get, Extension, Router};
 use magick_rust::magick_wand_genesis;
+use settings::ImgSource;
 use std::net::SocketAddr;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
@@ -9,12 +10,6 @@ mod settings;
 
 mod img_processing;
 use crate::img_processing::{handle_img, state::BucketConfig};
-
-const KENYA_BUCKET_NAME: &str = "";
-const KENYA_CACHE_BUCKET_NAME: &str = "";
-
-const ZAMBIA_BUCKET_NAME: &str = "";
-const ZAMBIA_CACHE_BUCKET_NAME: &str = "";
 
 #[tokio::main]
 async fn main() {
@@ -38,25 +33,12 @@ async fn main() {
     let rek_client: aws_sdk_rekognition::Client =
         aws_sdk_rekognition::Client::new(&aws_configuration);
 
+    let img_router = create_img_router(config.img_sources, s3_client, rek_client);
+
     let routes: Router = Router::new()
         .route("/", get(index))
+        .nest("", img_router)
         .route("/health", get(health))
-        .nest(
-            "",
-            Router::new()
-                .route("/ke/*img_key", get(handle_img))
-                .with_state(BucketConfig {
-                    bucket_name: KENYA_BUCKET_NAME,
-                    cache_bucket_name: KENYA_CACHE_BUCKET_NAME,
-                })
-                .route("/zm/*img_key", get(handle_img))
-                .with_state(BucketConfig {
-                    bucket_name: ZAMBIA_BUCKET_NAME,
-                    cache_bucket_name: ZAMBIA_CACHE_BUCKET_NAME,
-                })
-                .layer(Extension(s3_client))
-                .layer(Extension(rek_client)),
-        )
         .fallback(handler_404)
         .layer(
             TraceLayer::new_for_http()
@@ -83,4 +65,26 @@ async fn health() -> impl IntoResponse {
 
 async fn handler_404() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "nothing to see here")
+}
+
+fn create_img_router(
+    img_sources: Vec<ImgSource>,
+    s3_client: aws_sdk_s3::Client,
+    rek_client: aws_sdk_rekognition::Client,
+) -> Router {
+    let mut img_router = Router::new();
+
+    for img_source in img_sources.iter() {
+        img_router = img_router.route(
+            &format!("/{}/*img_key", img_source.path.clone()),
+            get(handle_img).with_state(BucketConfig {
+                bucket_name: img_source.bucket.clone(),
+                cache_bucket_name: img_source.cache_bucket.clone(),
+            }),
+        );
+    }
+
+    img_router
+        .layer(Extension(s3_client))
+        .layer(Extension(rek_client))
 }

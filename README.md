@@ -40,3 +40,12 @@ cargo watch -q -c -w src/ -x run
 ```bash
 cargo build --release
 ```
+
+## configuration
+
+configuration for running vulpix app lies in `config` folder. The default config is in `Default.toml` file.   
+Local config can be overriden by adding to `Local.toml` file and similarly production config can be overriden by adding to `Production.toml`
+
+## architecture
+
+[![vulpix architecture](https://github.com/apolloagriculture/vulpix/assets/4706261/d6402d47-63e2-4ba5-9651-54fd0c19fb68)](https://app.cloudcraft.co/view/d0e8a327-a494-4ab4-988d-7f06d477d232?key=6baefbf0-77f6-4261-99f8-c6f0353b841f&interactive=true&embed=true)

@@ -30,8 +30,8 @@ pub async fn handle_img(
     let img_res = get_or_cache_img(
         &s3_client,
         rek_client,
-        bucket_name,
-        cache_bucket_name,
+        &bucket_name,
+        &cache_bucket_name,
         &img_key,
         params,
     )

@@ -8,8 +8,16 @@ pub struct Server {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct ImgSource {
+    pub path: String,
+    pub bucket: String,
+    pub cache_bucket: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub server: Server,
+    pub img_sources: Vec<ImgSource>,
     pub env: ENV,
 }
 
