@@ -7,18 +7,18 @@ edition = "2021"
 # web stack
 axum = {version = "0.6.20", features = ["tracing"] }
 serde = {version = "1.0.183", features = ["derive"]}
-serde_json = "1.0.104"
+serde_json = "1.0"
 tokio = {version = "1.31.0", features = ["full"]}
 # tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tower-http = { version = "0.4.3", features = ["trace"] }
+tower-http = { version = "0.4.4", features = ["trace"] }
 # aws
-aws-config = "0.56.0"
-aws-sdk-s3 = "0.29.0"
-aws-sdk-rekognition = "0.29.0"
+aws-config = "0.56.1"
+aws-sdk-s3 = "0.34.0"
+aws-sdk-rekognition = "0.34.0"
 # img processing
-magick_rust = {version = "0.19.0", features = ["disable-hdri"]}
+magick_rust = {version = "0.19.1", features = ["disable-hdri"]}
 # utils
 md5 = "0.7.0"
 thiserror = "1.0"
