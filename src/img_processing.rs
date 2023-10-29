@@ -4,7 +4,7 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Extension, Json,
 };
 use magick_rust::MagickWand;
@@ -26,46 +26,22 @@ pub async fn handle_img(
     Extension(rek_client): Extension<rek::Client>,
     Path(img_key): Path<String>,
     Query(params): Query<ImgParams>,
-) -> impl IntoResponse {
-    let img_res = get_or_cache_img(
-        &s3_client,
-        rek_client,
-        &bucket_name,
-        &cache_bucket_name,
-        &img_key,
-        params,
-    )
-    .await;
-
-    match img_res {
-        Ok(img) => handle_img_response(img).into_response(),
-        Err(err) => handle_img_err(err).into_response(),
-    }
-}
-
-async fn get_or_cache_img(
-    s3_client: &s3::Client,
-    rek_client: rek::Client,
-    bucket_name: &str,
-    cache_bucket_name: &str,
-    img_key: &str,
-    params: ImgParams,
 ) -> Result<ImgResult, ImageError> {
     let cached_key = format!("{:x}/{}", params.cacheable_param_key(), img_key);
-    let cached_img = get_aws_img(s3_client, cache_bucket_name, &cached_key).await;
+    let cached_img = get_aws_img(&s3_client, &cache_bucket_name, &cached_key).await;
 
     match cached_img {
         Ok(img) => Ok(ImgResult {
             img_bytes: img.to_vec(),
-            format: params.format.clone().unwrap_or_default(),
+            format: params.format.unwrap_or_default(),
         }),
         Err(_) => {
             transform_cache_img(
-                s3_client,
+                &s3_client,
                 rek_client,
-                bucket_name,
-                cache_bucket_name,
-                img_key,
+                &bucket_name,
+                &cache_bucket_name,
+                &img_key,
                 &cached_key,
                 &params,
             )
@@ -246,20 +222,23 @@ async fn rek_face(
     })
 }
 
-fn handle_img_response(ImgResult { img_bytes, format }: ImgResult) -> impl IntoResponse {
-    let content_type = format!("image/{}", format);
-    (
-        ([(axum::http::header::CONTENT_TYPE, content_type.clone())]),
-        axum::response::AppendHeaders([(axum::http::header::CONTENT_TYPE, content_type.clone())]),
-        img_bytes,
-    )
+impl IntoResponse for ImgResult {
+    fn into_response(self) -> Response {
+        let content_type = format!("image/{}", self.format);
+        (
+            ([(axum::http::header::CONTENT_TYPE, content_type.clone())]),
+            axum::response::AppendHeaders([(axum::http::header::CONTENT_TYPE, content_type)]),
+            self.img_bytes,
+        )
+            .into_response()
+    }
 }
 
-fn handle_img_err(err: ImageError) -> impl IntoResponse {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(
-            serde_json::json!({"err": "an error occured while processing image", "msg": format!("{}", err)}),
-        ),
-    )
+impl IntoResponse for ImageError {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"err": "an error occured while processing image", "msg": format!("{}", self)}))
+        ).into_response()
+    }
 }
