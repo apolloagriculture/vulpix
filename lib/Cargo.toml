@@ -2,6 +2,9 @@
 name = "vulpix"
 version = "1.0.0"
 edition = "2021"
+description = "An image processing service."
+repository = "https://github.com/apolloagriculture/vulpix"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
