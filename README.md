@@ -32,7 +32,13 @@ cargo install cargo-watch
 ```
 
 ```bash
-cargo watch -q -c -w src/ -x run
+cargo watch -q -c -w ./lib -w ./server -w ./config -x run
+```
+
+or 
+
+```bash
+cargo dev
 ```
 
 ## build

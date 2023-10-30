@@ -1,0 +1,29 @@
+[package]
+name = "vulpix-server"
+version = "1.0.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# vulpix
+vulpix = { path = "../lib" }
+# web stack
+axum = {version = "0.6.20", features = ["tracing"] }
+serde = {version = "1.0.183", features = ["derive"]}
+serde_json = "1.0"
+tokio = {version = "1.31.0", features = ["full"]}
+# tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tower-http = { version = "0.4.4", features = ["trace"] }
+# aws
+aws-config = "0.56.1"
+aws-sdk-s3 = "0.34.0"
+aws-sdk-rekognition = "0.34.0"
+# utils
+config = "0.13.3"
+sentry = "0.31.7"
+async-trait = "0.1.74"
+anyhow = "1.0"
+

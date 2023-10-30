@@ -1,0 +1,2 @@
+[alias]     # command aliases
+dev = "watch -q -c -w ./lib -w ./server -w ./config -x run"

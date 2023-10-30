@@ -1,21 +1,20 @@
 use async_trait::async_trait;
+use anyhow::Result;
 use magick_rust::{MagickWand, magick_wand_genesis};
 
-pub mod errors;
-pub mod img_result;
 pub mod params;
 pub mod bounding_box;
 
-use self::{errors::ImageError, img_result::ImgResult, params::ImgParams, bounding_box::BoundingBox};
+use self::{params::ImgParams, bounding_box::BoundingBox};
 
 #[async_trait]
 pub trait ImageAccess
 where
     Self: Clone + std::marker::Send + 'static,
 {
-    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>, ImageError>;
+    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>>;
    
-    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<(), ImageError>;
+    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<()>;
 
     async fn recog_face(self, tag: &str, key: &str) -> Option<BoundingBox>;
 }
@@ -31,14 +30,11 @@ pub async fn handle_img(
     img_key: &str,
     cached_key: &str,
     params: &ImgParams,
-) -> Result<ImgResult, ImageError> {
+) -> Result<Vec<u8>> {
     let cached_img = image_access.clone().get_img(&cache_tag_name, &cached_key).await;
 
     match cached_img {
-        Ok(img) => Ok(ImgResult {
-            img_bytes: img.to_vec(),
-            format: params.format.clone().unwrap_or_default(),
-        }),
+        Ok(img) => Ok(img),
         Err(_) => {
             transform_cache_img(
                 image_access,
@@ -60,18 +56,18 @@ async fn transform_cache_img(
     img_key: &str,
     cached_key: &str,
     params: &ImgParams,
-) -> Result<ImgResult, ImageError> {
-    let s3_img = image_access.clone().get_img(tag_name, &img_key).await?;
+) -> Result<Vec<u8>> {
+    let orig_img = image_access.clone().get_img(tag_name, &img_key).await?;
     let face_bounding_box = if params.facecrop.unwrap_or(false) {
         image_access.clone().recog_face(tag_name, &img_key).await
     } else {
         None
     };
 
-    let img_result = transform_img(s3_img, params, face_bounding_box)?;
+    let img_result = transform_img(orig_img, params, face_bounding_box)?;
 
     let cloned_image_access = image_access.clone();
-    let cloned_img = img_result.clone().img_bytes;
+    let cloned_img = img_result.clone();
     let cloned_cache_tag_name = cache_tag_name.to_owned();
     let cloned_cached_key = cached_key.to_owned();
 
@@ -92,7 +88,7 @@ fn transform_img(
     orig_img: Vec<u8>,
     params: &ImgParams,
     face_bounding_box: Option<BoundingBox>,
-) -> Result<ImgResult, ImageError> {
+) -> Result<Vec<u8>> {
     let wand = MagickWand::new();
     let _ = wand.read_image_blob(orig_img);
 
@@ -159,7 +155,5 @@ fn transform_img(
     }
 
     let format = params.format.clone().unwrap_or_default();
-    wand.write_image_blob(&format!("{}", format))
-        .map_err(ImageError::MagickWandError)
-        .map(|img_bytes| ImgResult { img_bytes, format })
+    Ok(wand.write_image_blob(&format!("{}", format))?)
 }

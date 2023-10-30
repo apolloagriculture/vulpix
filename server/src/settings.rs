@@ -8,6 +8,11 @@ pub struct Server {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Sentry {
+    pub dsn: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct ImgSource {
     pub path: String,
     pub bucket: String,
@@ -17,6 +22,7 @@ pub struct ImgSource {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub server: Server,
+    pub sentry: Option<Sentry>,
     pub img_sources: Vec<ImgSource>,
     pub env: ENV,
 }
