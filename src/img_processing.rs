@@ -1,46 +1,49 @@
-use aws_sdk_rekognition as rek;
-use aws_sdk_s3 as s3;
-use axum::{
-    body::Bytes,
-    extract::{Path, Query, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Extension, Json,
-};
-use magick_rust::MagickWand;
-use rek::types::BoundingBox;
+use async_trait::async_trait;
+use magick_rust::{MagickWand, magick_wand_genesis};
 
-mod errors;
-mod img_result;
-mod params;
-pub mod state;
+pub mod errors;
+pub mod img_result;
+pub mod params;
+pub mod bounding_box;
 
-use self::{errors::ImageError, img_result::ImgResult, params::ImgParams, state::BucketConfig};
+use self::{errors::ImageError, img_result::ImgResult, params::ImgParams, bounding_box::BoundingBox};
+
+#[async_trait]
+pub trait ImageAccess
+where
+    Self: Clone + std::marker::Send + 'static,
+{
+    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>, ImageError>;
+   
+    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<(), ImageError>;
+
+    async fn recog_face(self, tag: &str, key: &str) -> Option<BoundingBox>;
+}
+
+pub fn init() {
+    magick_wand_genesis();
+}
 
 pub async fn handle_img(
-    State(BucketConfig {
-        bucket_name,
-        cache_bucket_name,
-    }): State<BucketConfig>,
-    Extension(s3_client): Extension<s3::Client>,
-    Extension(rek_client): Extension<rek::Client>,
-    Path(img_key): Path<String>,
-    Query(params): Query<ImgParams>,
+    image_access: impl ImageAccess,
+    tag_name: &str,
+    cache_tag_name: &str,
+    img_key: &str,
+    cached_key: &str,
+    params: &ImgParams,
 ) -> Result<ImgResult, ImageError> {
-    let cached_key = format!("{:x}/{}", params.cacheable_param_key(), img_key);
-    let cached_img = get_aws_img(&s3_client, &cache_bucket_name, &cached_key).await;
+    let cached_img = image_access.clone().get_img(&cache_tag_name, &cached_key).await;
 
     match cached_img {
         Ok(img) => Ok(ImgResult {
             img_bytes: img.to_vec(),
-            format: params.format.unwrap_or_default(),
+            format: params.format.clone().unwrap_or_default(),
         }),
         Err(_) => {
             transform_cache_img(
-                &s3_client,
-                rek_client,
-                &bucket_name,
-                &cache_bucket_name,
+                image_access,
+                &tag_name,
+                &cache_tag_name,
                 &img_key,
                 &cached_key,
                 &params,
@@ -51,75 +54,42 @@ pub async fn handle_img(
 }
 
 async fn transform_cache_img(
-    s3_client: &s3::Client,
-    rek_client: rek::Client,
-    bucket_name: &str,
-    cache_bucket_name: &str,
+    image_access: impl ImageAccess,
+    tag_name: &str,
+    cache_tag_name: &str,
     img_key: &str,
     cached_key: &str,
     params: &ImgParams,
 ) -> Result<ImgResult, ImageError> {
-    let s3_img = get_aws_img(&s3_client, bucket_name, &img_key).await?;
+    let s3_img = image_access.clone().get_img(tag_name, &img_key).await?;
     let face_bounding_box = if params.facecrop.unwrap_or(false) {
-        rek_face(rek_client, bucket_name, &img_key).await
+        image_access.clone().recog_face(tag_name, &img_key).await
     } else {
         None
     };
 
     let img_result = transform_img(s3_img, params, face_bounding_box)?;
 
+    let cloned_image_access = image_access.clone();
     let cloned_img = img_result.clone().img_bytes;
-    let cloned_s3_client = s3_client.clone();
-    let cloned_cache_bucket_name = cache_bucket_name.to_owned();
+    let cloned_cache_tag_name = cache_tag_name.to_owned();
     let cloned_cached_key = cached_key.to_owned();
 
     tokio::spawn(async move {
-        save_aws_img(
-            &cloned_s3_client,
-            &cloned_cache_bucket_name,
-            &cloned_cached_key,
-            cloned_img.into(),
-        )
-        .await
+        cloned_image_access
+            .save_img(
+                &cloned_cache_tag_name,
+                &cloned_cached_key,
+                cloned_img.into(),
+            )
+            .await
     });
 
     Ok(img_result)
 }
 
-async fn get_aws_img(
-    s3_client: &s3::Client,
-    bucket_name: &str,
-    img_key: &str,
-) -> Result<Bytes, ImageError> {
-    let aws_img = s3_client
-        .get_object()
-        .bucket(bucket_name)
-        .key(img_key)
-        .send()
-        .await?;
-    let img_bytes = aws_img.body.collect().await?.into_bytes();
-    Ok(img_bytes)
-}
-
-async fn save_aws_img(
-    s3_client: &s3::Client,
-    bucket_name: &str,
-    img_key: &str,
-    body: Bytes,
-) -> Result<(), ImageError> {
-    let body_stream = s3::primitives::ByteStream::from(body);
-    let _ = s3_client
-        .put_object()
-        .bucket(bucket_name)
-        .key(img_key)
-        .body(body_stream)
-        .send()
-        .await?;
-    Ok(())
-}
-
 fn transform_img(
-    orig_img: Bytes,
+    orig_img: Vec<u8>,
     params: &ImgParams,
     face_bounding_box: Option<BoundingBox>,
 ) -> Result<ImgResult, ImageError> {
@@ -131,8 +101,8 @@ fn transform_img(
     let orig_aspect_ratio = orig_width as f32 / orig_height as f32;
 
     if let Some(bounding_box) = face_bounding_box {
-        let box_w: f32 = bounding_box.width().unwrap_or(1.0) * orig_width;
-        let box_h: f32 = bounding_box.height().unwrap_or(1.0) * orig_height;
+        let box_w: f32 = bounding_box.width.unwrap_or(1.0) * orig_width;
+        let box_h: f32 = bounding_box.height.unwrap_or(1.0) * orig_height;
 
         let desired_aspect_ratio = params.w.unwrap_or(orig_width) / params.h.unwrap_or(orig_height);
 
@@ -151,10 +121,10 @@ fn transform_img(
         let padding = params.facepad.unwrap_or(1.0);
         let padded_w: f32 = adjusted_w * padding;
         let padded_h: f32 = adjusted_h * padding;
-        let padded_x = (bounding_box.left().unwrap_or(0.0) * orig_width)
+        let padded_x = (bounding_box.left.unwrap_or(0.0) * orig_width)
             - ((padding - 1.0) * adjusted_w / 2.0)
             - (adjusted_w - box_w) / 1.5;
-        let padded_y = (bounding_box.top().unwrap_or(0.0) * orig_height)
+        let padded_y = (bounding_box.top.unwrap_or(0.0) * orig_height)
             - ((padding - 1.0) * adjusted_h / 2.0)
             - (adjusted_h - box_h) / 1.5;
 
@@ -192,53 +162,4 @@ fn transform_img(
     wand.write_image_blob(&format!("{}", format))
         .map_err(ImageError::MagickWandError)
         .map(|img_bytes| ImgResult { img_bytes, format })
-}
-
-async fn rek_face(
-    rek_client: rek::Client,
-    bucket_name: &str,
-    img_key: &str,
-) -> Option<BoundingBox> {
-    let s3_obj = rek::types::S3Object::builder()
-        .bucket(bucket_name)
-        .name(img_key)
-        .build();
-
-    let s3_img = rek::types::Image::builder().s3_object(s3_obj).build();
-
-    let rek_resp = rek_client
-        .detect_faces()
-        .image(s3_img)
-        .attributes(aws_sdk_rekognition::types::Attribute::All)
-        .send()
-        .await;
-
-    rek_resp.ok().and_then(|f| {
-        f.face_details()
-            .unwrap_or_default()
-            .first()
-            .and_then(|f| f.bounding_box())
-            .cloned()
-    })
-}
-
-impl IntoResponse for ImgResult {
-    fn into_response(self) -> Response {
-        let content_type = format!("image/{}", self.format);
-        (
-            ([(axum::http::header::CONTENT_TYPE, content_type.clone())]),
-            axum::response::AppendHeaders([(axum::http::header::CONTENT_TYPE, content_type)]),
-            self.img_bytes,
-        )
-            .into_response()
-    }
-}
-
-impl IntoResponse for ImageError {
-    fn into_response(self) -> Response {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"err": "an error occured while processing image", "msg": format!("{}", self)}))
-        ).into_response()
-    }
 }

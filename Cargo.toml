@@ -23,3 +23,4 @@ magick_rust = {version = "0.19.1", features = ["disable-hdri"]}
 md5 = "0.7.0"
 thiserror = "1.0"
 config = "0.13.3"
+async-trait = "0.1.74"

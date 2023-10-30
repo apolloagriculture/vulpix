@@ -2213,6 +2213,7 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 name = "vulpix"
 version = "1.0.0"
 dependencies = [
+ "async-trait",
  "aws-config",
  "aws-sdk-rekognition",
  "aws-sdk-s3",

@@ -1,15 +1,25 @@
+use aws_sdk_rekognition as rek;
 use aws_sdk_s3 as s3;
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Extension, Router};
-use magick_rust::magick_wand_genesis;
-use settings::ImgSource;
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Extension, Json, Router,
+};
+use image_access::AwsImageAccess;
 use std::net::SocketAddr;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 
-mod settings;
-
+mod image_access;
 mod img_processing;
-use crate::img_processing::{handle_img, state::BucketConfig};
+mod settings;
+mod state;
+
+use img_processing::{errors::ImageError, img_result::ImgResult, params::ImgParams};
+use settings::ImgSource;
+use state::BucketConfig;
 
 #[tokio::main]
 async fn main() {
@@ -26,7 +36,7 @@ async fn main() {
         }
     };
 
-    magick_wand_genesis();
+    img_processing::init();
 
     let aws_configuration: aws_config::SdkConfig = aws_config::load_from_env().await;
     let s3_client: aws_sdk_s3::Client = s3::Client::new(&aws_configuration);
@@ -87,4 +97,51 @@ fn create_img_router(
     img_router
         .layer(Extension(s3_client))
         .layer(Extension(rek_client))
+}
+
+async fn handle_img(
+    State(BucketConfig {
+        bucket_name,
+        cache_bucket_name,
+    }): State<BucketConfig>,
+    Extension(s3_client): Extension<s3::Client>,
+    Extension(rek_client): Extension<rek::Client>,
+    Path(img_key): Path<String>,
+    Query(params): Query<ImgParams>,
+) -> Result<ImgResult, ImageError> {
+    let cached_key = format!("{:x}/{}", params.cacheable_param_key(), img_key);
+    let image_access = AwsImageAccess {
+        s3_client: s3_client,
+        rek_client: rek_client,
+    };
+    img_processing::handle_img(
+        image_access,
+        &bucket_name,
+        &cache_bucket_name,
+        &img_key,
+        &cached_key,
+        &params,
+    )
+    .await
+}
+
+impl IntoResponse for ImgResult {
+    fn into_response(self) -> Response {
+        let content_type = format!("image/{}", self.format);
+        (
+            ([(axum::http::header::CONTENT_TYPE, content_type.clone())]),
+            axum::response::AppendHeaders([(axum::http::header::CONTENT_TYPE, content_type)]),
+            self.img_bytes,
+        )
+            .into_response()
+    }
+}
+
+impl IntoResponse for ImageError {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"err": "an error occured while processing image", "msg": format!("{}", self)}))
+        ).into_response()
+    }
 }
