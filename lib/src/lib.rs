@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use anyhow::Result;
 use magick_rust::{MagickWand, magick_wand_genesis};
+use std::sync::Once;
 
 pub mod params;
 pub mod bounding_box;
@@ -19,8 +20,12 @@ where
     async fn recog_face(self, tag: &str, key: &str) -> Option<BoundingBox>;
 }
 
+static START: Once = Once::new();
+
 pub fn init() {
-    magick_wand_genesis();
+    START.call_once(|| {
+        magick_wand_genesis();
+    });
 }
 
 pub async fn handle_img(
