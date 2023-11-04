@@ -1,6 +1,9 @@
 # Vulpix
 
-An image processing service.
+An image processing web app built using [vulpix](https://crates.io/crates/vulpix).   
+Used in production at [Apollo Agriculture](https://www.apolloagriculture.com) to process and serve images securely from aws.
+
+The repo also acts as an example usage [vulpix](https://crates.io/crates/vulpix) library building an app using [axum](https://crates.io/crates/axum)
 
 ## setup
 

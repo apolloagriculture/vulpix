@@ -26,4 +26,3 @@ config = "0.13.3"
 sentry = "0.31.7"
 async-trait = "0.1.74"
 anyhow = "1.0"
-

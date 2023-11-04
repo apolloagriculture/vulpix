@@ -1,21 +1,22 @@
 use async_trait::async_trait;
-use anyhow::Result;
 use magick_rust::{MagickWand, magick_wand_genesis};
 use std::sync::Once;
 
 pub mod params;
 pub mod bounding_box;
+pub mod errors;
 
 use self::{params::ImgParams, bounding_box::BoundingBox};
+pub use errors::ImageError;
 
 #[async_trait]
 pub trait ImageAccess
 where
     Self: Clone + std::marker::Send + 'static,
 {
-    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>>;
+    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>, ImageError>;
    
-    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<()>;
+    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<(), ImageError>;
 
     async fn recog_face(self, tag: &str, key: &str) -> Option<BoundingBox>;
 }
@@ -33,9 +34,9 @@ pub async fn handle_img(
     tag_name: &str,
     cache_tag_name: &str,
     img_key: &str,
-    cached_key: &str,
     params: &ImgParams,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>, ImageError> {
+    let cached_key = format!("{:x}/{}", params.cacheable_param_key(), &img_key);
     let cached_img = image_access.clone().get_img(&cache_tag_name, &cached_key).await;
 
     match cached_img {
@@ -61,7 +62,7 @@ async fn transform_cache_img(
     img_key: &str,
     cached_key: &str,
     params: &ImgParams,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>, ImageError> {
     let orig_img = image_access.clone().get_img(tag_name, &img_key).await?;
     let face_bounding_box = if params.facecrop.unwrap_or(false) {
         image_access.clone().recog_face(tag_name, &img_key).await
@@ -93,7 +94,7 @@ fn transform_img(
     orig_img: Vec<u8>,
     params: &ImgParams,
     face_bounding_box: Option<BoundingBox>,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>, ImageError> {
     let wand = MagickWand::new();
     let _ = wand.read_image_blob(orig_img);
 

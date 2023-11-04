@@ -44,7 +44,6 @@ async fn handle_img(
     Path(img_key): Path<String>,
     Query(params): Query<ImgParams>,
 ) -> Result<ImageResult, AppError> {
-    let cached_key = format!("{:x}/{}", params.cacheable_param_key(), img_key);
     let image_access = AwsImageAccess {
         s3_client: s3_client,
         rek_client: rek_client,
@@ -54,7 +53,6 @@ async fn handle_img(
         &bucket_name,
         &cache_bucket_name,
         &img_key,
-        &cached_key,
         &params,
     )
     .await?;

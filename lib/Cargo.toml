@@ -1,9 +1,9 @@
 [package]
 name = "vulpix"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2021"
 description = "An image processing service."
-repository = "https://github.com/apolloagriculture/vulpix"
+repository = "https://github.com/apolloagriculture/vulpix/tree/main/lib"
 readme = "README.md"
 license = "MIT"
 
@@ -17,5 +17,5 @@ serde_json = "1.0"
 magick_rust = {version = "0.19.1", features = ["disable-hdri"]}
 # utils
 md5 = "0.7.0"
-anyhow = "1.0"
+thiserror = "1.0"
 async-trait = "0.1.74"

@@ -1,11 +1,8 @@
-use std::{error::Error, fmt::Display};
-
-use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_rekognition as rek;
 use aws_sdk_s3 as s3;
 
-use vulpix::{bounding_box::BoundingBox, ImageAccess};
+use vulpix::{bounding_box::BoundingBox, ImageAccess, ImageError};
 
 #[derive(Clone)]
 pub struct AwsImageAccess {
@@ -13,23 +10,9 @@ pub struct AwsImageAccess {
     pub rek_client: rek::Client,
 }
 
-#[derive(Debug)]
-struct AwsError {
-    tag: String,
-    message: String,
-}
-
-impl Display for AwsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "error occurred while {} \n {}", self.tag, self.message)
-    }
-}
-
-impl Error for AwsError {}
-
 #[async_trait]
 impl ImageAccess for AwsImageAccess {
-    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>> {
+    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>, ImageError> {
         let aws_img = self
             .s3_client
             .get_object()
@@ -37,24 +20,18 @@ impl ImageAccess for AwsImageAccess {
             .key(key)
             .send()
             .await
-            .map_err(|err| AwsError {
-                tag: "aws read file".into(),
-                message: format!("{:?}", err),
-            })?
+            .map_err(|err| ImageError::ImgReadError(format!("{:?}", err)))?
             .body;
         let img_bytes = aws_img
             .collect()
             .await
-            .map_err(|err| AwsError {
-                tag: "aws byte stream conversion".into(),
-                message: format!("{:?}", err),
-            })?
+            .map_err(|err| ImageError::ImgReadError(format!("{:?}", err)))?
             .into_bytes()
             .to_vec();
         Ok(img_bytes)
     }
 
-    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<()> {
+    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<(), ImageError> {
         let body_stream = s3::primitives::ByteStream::from(body);
         let _ = self
             .s3_client
@@ -64,10 +41,7 @@ impl ImageAccess for AwsImageAccess {
             .body(body_stream)
             .send()
             .await
-            .map_err(|err| AwsError {
-                tag: "aws save file".into(),
-                message: format!("{:?}", err.to_string()),
-            })?;
+            .map_err(|err| ImageError::ImgWriteError (format!("{:?}", err)))?;
         Ok(())
     }
 

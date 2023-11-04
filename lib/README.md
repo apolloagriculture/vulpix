@@ -3,7 +3,7 @@
 > an image processing library
 
 Vulpix is a tiny wrapper over [image magick](https://imagemagick.org/) using [magick_rust](https://crates.io/crates/magick_rust) wrapper.
-It allows you process images quickly for regular tasks, like cropping, sharepenimg, brightening, chnaging formats easily. It also supports cropping on face.
+It allows you process images quickly for regular tasks, like cropping, sharpening, brightening, changing formats easily. It also supports cropping on face.
 A usage of this library can be found [here](https://github.com/apolloagriculture/vulpix), where vulpix is used to securely serve images from aws s3 and process them.
 
 ## installation
@@ -41,18 +41,17 @@ and detecting face in an image.
 you can see a practical implementation of this trait using aws s3 and rekognation apis [here](https://github.com/apolloagriculture/vulpix/blob/main/server/src/image_access.rs)
 
 ```rs
-use vulpix::{bounding_box::BoundingBox, ImageAccess};
-use anyhow::Result;
+use vulpix::{bounding_box::BoundingBox, ImageAccess, ImageError};
 
 struct MyImageRepo
 
 #[async_trait]
 impl ImageAccess for MyImageRepo {
-    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>> {
+    async fn get_img(self, tag: &str, key: &str) -> Result<Vec<u8>, ImageError> {
       todo!("implement get_img")
     }
 
-    async fn save_img(self, tag: &str, key: &str, body: Vec<u8>) -> Result<()> {
+    async fn save_img(self, tag: &str, key: &str, body: Vec<u8, ImageError>) -> Result<()> {
       todo!("implement save_img")
     }
 
@@ -83,10 +82,9 @@ let image_access = MyImageRepo {};
 
 let processed_image_bytes = vulpix::handle_img(
       image_access,
-      "my_bucket",
-      "my_cache_bucket",
+      "my_tag",
+      "my_cache_tag",
       "image_key",
-      "cached_image_key",
       &image_params,
   )
   .await?
