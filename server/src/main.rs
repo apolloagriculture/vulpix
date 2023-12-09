@@ -1,6 +1,6 @@
 use aws_sdk_s3 as s3;
 use axum::{http::StatusCode, response::IntoResponse, routing::get, Router};
-use std::net::SocketAddr;
+use tokio::net::TcpListener;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 
@@ -39,7 +39,7 @@ async fn main() {
 
     vulpix::init();
 
-    let aws_configuration: aws_config::SdkConfig = aws_config::load_from_env().await;
+    let aws_configuration: aws_config::SdkConfig = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let s3_client: aws_sdk_s3::Client = s3::Client::new(&aws_configuration);
     let rek_client: aws_sdk_rekognition::Client =
         aws_sdk_rekognition::Client::new(&aws_configuration);
@@ -57,11 +57,12 @@ async fn main() {
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
         );
 
-    let addr: SocketAddr = format!("[::]:{}", config.server.port).parse().unwrap();
-    tracing::info!("listening on {}", addr);
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", config.server.port))
+        .await
+        .unwrap();
+    tracing::info!("listening on {:?}", listener.local_addr());
 
-    axum::Server::bind(&addr)
-        .serve(routes.into_make_service())
+    axum::serve(listener, routes.into_make_service())
         .await
         .unwrap();
 }

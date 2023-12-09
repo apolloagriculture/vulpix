@@ -60,7 +60,6 @@ impl ImageAccess for AwsImageAccess {
             .await;
         rek_resp.as_ref().ok().and_then(|f| {
             f.face_details()
-                .unwrap_or_default()
                 .first()
                 .and_then(|f| f.bounding_box())
                 .cloned()

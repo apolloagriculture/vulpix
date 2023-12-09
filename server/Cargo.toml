@@ -9,20 +9,20 @@ edition = "2021"
 # vulpix
 vulpix = { path = "../lib" }
 # web stack
-axum = {version = "0.6.20", features = ["tracing"] }
+axum = {version = "0.7.2", features = ["tracing"] }
 serde = {version = "1.0.183", features = ["derive"]}
 serde_json = "1.0"
 tokio = {version = "1.31.0", features = ["full"]}
 # tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tower-http = { version = "0.4.4", features = ["trace"] }
+tower-http = { version = "0.5", features = ["trace"] }
 # aws
-aws-config = "0.56.1"
-aws-sdk-s3 = "0.34.0"
-aws-sdk-rekognition = "0.34.0"
+aws-config = "1.0"
+aws-sdk-s3 = "1.5"
+aws-sdk-rekognition = "1.4"
 # utils
 config = "0.13.3"
-sentry = "0.31.7"
+sentry = "0.32"
 async-trait = "0.1.74"
 anyhow = "1.0"
